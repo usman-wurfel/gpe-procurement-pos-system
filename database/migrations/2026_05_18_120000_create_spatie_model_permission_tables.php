@@ -1,0 +1,70 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    public function up(): void
+    {
+        if (! Schema::hasTable('model_has_permissions')) {
+            Schema::create('model_has_permissions', function (Blueprint $table) {
+                $table->unsignedInteger('permission_id');
+                $table->string('model_type');
+                $table->unsignedBigInteger('model_id');
+
+                $table->foreign('permission_id')
+                    ->references('id')
+                    ->on('permissions')
+                    ->onDelete('cascade');
+
+                $table->primary(['permission_id', 'model_id', 'model_type'], 'model_has_permissions_primary');
+            });
+        }
+
+        if (! Schema::hasTable('model_has_roles')) {
+            Schema::create('model_has_roles', function (Blueprint $table) {
+                $table->unsignedInteger('role_id');
+                $table->string('model_type');
+                $table->unsignedBigInteger('model_id');
+
+                $table->foreign('role_id')
+                    ->references('id')
+                    ->on('roles')
+                    ->onDelete('cascade');
+
+                $table->primary(['role_id', 'model_id', 'model_type'], 'model_has_roles_primary');
+            });
+        }
+
+        // Legacy app uses users.role_id; Spatie expects model_has_roles rows for Gate checks.
+        if (Schema::hasTable('users') && Schema::hasColumn('users', 'role_id')) {
+            $userModel = config('auth.providers.users.model', \App\Models\User::class);
+
+            DB::table('users')
+                ->whereNotNull('role_id')
+                ->orderBy('id')
+                ->chunkById(200, function ($users) use ($userModel) {
+                    foreach ($users as $user) {
+                        DB::table('model_has_roles')->insertOrIgnore([
+                            'role_id' => $user->role_id,
+                            'model_type' => $userModel,
+                            'model_id' => $user->id,
+                        ]);
+                    }
+                });
+        }
+
+        if (app()->bound('cache')) {
+            app('cache')->forget(config('permission.cache.key', 'spatie.permission.cache'));
+        }
+    }
+
+    public function down(): void
+    {
+        Schema::dropIfExists('model_has_roles');
+        Schema::dropIfExists('model_has_permissions');
+    }
+};
